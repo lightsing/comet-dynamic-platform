@@ -1,0 +1,11 @@
+[package]
+name = "spider"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pretty_env_logger = "0.4"
+plugin-base = { path = "../../plugin-base" }
