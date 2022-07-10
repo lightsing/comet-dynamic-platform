@@ -12,9 +12,7 @@ pub struct ExternalLogger {
 
 impl ExternalLogger {
     pub fn new(callback: LogCallback) -> Self {
-        Self {
-            callback
-        }
+        Self { callback }
     }
 }
 

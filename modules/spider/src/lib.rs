@@ -1,13 +1,11 @@
-#[macro_use] extern crate plugin_base;
+#[macro_use]
+extern crate plugin_base;
 
 use plugin_base::log::{self, LevelFilter};
-use plugin_base::{declare_plugin, Plugin, abi_stable::std_types::RStr, PluginError};
-use plugin_base::abi_stable::std_types::RString;
 use plugin_base::logger::{ExternalLogger, LogCallback};
+use plugin_base::{abi_stable::std_types::RStr, declare_plugin, Plugin, PluginError};
 
-struct Spider {
-
-}
+struct Spider {}
 
 impl Plugin for Spider {
     fn name(&self) -> RStr<'static> {
@@ -21,13 +19,9 @@ impl Plugin for Spider {
     fn on_plugin_load(&self) {
         info!("Plugin loaded");
     }
-
 }
 
-fn create_plugin(
-    config: Option<String>,
-    log_callback: LogCallback
-) -> Result<Spider, PluginError> {
+fn create_plugin(_: Option<String>, log_callback: LogCallback) -> Result<Spider, PluginError> {
     let logger = ExternalLogger::new(log_callback);
     log::set_boxed_logger(Box::new(logger)).map_err(|_| PluginError::SetLogger)?;
     log::set_max_level(LevelFilter::Trace);
