@@ -1,0 +1,13 @@
+[package]
+name = "plugin-pack"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+ed25519-dalek = "1.0"
+clap = { version = "3.2", features = ["cargo", "derive"] }
+plugin-defs = { path = "../plugin-defs" }
+rand = "0.7"
+serde_json = "1.0.82"
+pem = "1.0.2"
