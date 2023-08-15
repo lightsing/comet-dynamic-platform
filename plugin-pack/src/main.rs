@@ -1,6 +1,6 @@
 use anyhow::bail;
 use clap::{Parser, Subcommand};
-use ed25519_dalek::Keypair;
+use ed25519_dalek::SigningKey;
 use pem::Pem;
 use plugin_defs::{Package, PackageMetadata};
 use rand::thread_rng;
@@ -53,10 +53,10 @@ fn gen_keypair(output_path: Option<String>) -> anyhow::Result<()> {
         env::current_dir()?
     };
     fs::create_dir_all(&output_path)?;
-    let keypair = Keypair::generate(&mut thread_rng());
+    let keypair = SigningKey::generate(&mut thread_rng());
     let pubkey = Pem {
         tag: "ed25519 dalek public key".to_uppercase(),
-        contents: keypair.public.as_bytes().to_vec(),
+        contents: keypair.verifying_key().as_bytes().to_vec(),
     };
     let key = Pem {
         tag: "ed25519 dalek key".to_uppercase(),
@@ -78,7 +78,10 @@ fn pack(
     let metadata = if let Some(path) = metadata {
         PathBuf::from(path)
     } else {
-        library.parent().unwrap().join("metadata.json")
+        library
+            .parent()
+            .unwrap()
+            .join("../../modules/spider/metadata.json")
     };
     check_file_exist(&metadata)?;
 
@@ -91,7 +94,7 @@ fn pack(
 
     let keypair = fs::read(key)?;
     let keypair = pem::parse(keypair)?.contents;
-    let keypair = Keypair::from_bytes(keypair.as_slice())?;
+    let keypair = SigningKey::from_bytes(&keypair.try_into().unwrap());
 
     let buf = fs::read(metadata)?;
     let metadata: PackageMetadata = serde_json::from_slice(buf.as_slice())?;

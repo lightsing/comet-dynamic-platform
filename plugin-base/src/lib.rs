@@ -3,17 +3,15 @@
 use abi_stable::sabi_trait;
 use abi_stable::std_types::{RNone, ROption, RResult, RStr, RString};
 use abi_stable::StableAbi;
-use ed25519_dalek::PublicKey;
+use ed25519_dalek::VerifyingKey;
 use konst::{primitive::parse_u64, unwrap_ctx};
 use libloading::{Library, Symbol};
 use once_cell::sync::Lazy;
 use plugin_defs::Package;
 use semver::{Version, VersionReq};
-use std::io::Read;
+use std::io;
 use std::ops::Deref;
-use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
-use std::{fs, io};
 
 pub use abi_stable;
 
@@ -22,12 +20,14 @@ pub use semver;
 
 pub mod logger;
 
+mod utils;
+
 use crate::logger::{log_callback, LogCallback};
 
-static VERIFIER_KEY: Lazy<PublicKey> = Lazy::new(|| {
+static VERIFIER_KEY: Lazy<VerifyingKey> = Lazy::new(|| {
     let key = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../public-key.pem"));
     let key = pem::parse(key).unwrap().contents;
-    PublicKey::from_bytes(key.as_slice()).unwrap()
+    VerifyingKey::from_bytes(&key.try_into().unwrap()).unwrap()
 });
 
 pub const API_VERSION: Version = Version::new(
@@ -55,10 +55,12 @@ pub enum Error {
     UnmetRequirement { name: String, req: String },
     #[error("plugin initialization failed: {0}")]
     PluginInitialization(PluginError),
-    #[error("generic io error: {0}")]
-    Io(#[from] io::Error),
+    #[error("failed to lock library file: {0}")]
+    LockFile(io::Error),
     #[error("another entity is tampering current program")]
     Tampered,
+    #[error("generic io error: {0}")]
+    Io(#[from] io::Error),
 }
 
 #[repr(u8)]
@@ -115,7 +117,14 @@ impl PluginManager {
         trace!("loading package: {:?}", filename.as_ref());
         let package = Package::import_file(filename, *VERIFIER_KEY.deref())?;
 
-        let lib = Self::load_plugin_inner(&package)?;
+        trace!("using release-recheck strategy");
+        let (_temp_dir, lib_path) = package.release_lib_to_temp()?;
+        trace!("re-open and lockdown dll from: {:?}", lib_path);
+        let mut lib_file = utils::lock_open_file(&lib_path)?;
+        utils::validate_file(&mut lib_file, package.digest())?;
+        trace!("integrity check passed");
+        let lib = Library::new(&lib_path).map_err(Error::LibraryLoad)?;
+
         self.loaded_libraries.push(lib);
         let lib = self.loaded_libraries.last().unwrap();
 
@@ -145,46 +154,6 @@ impl PluginManager {
                 req: version_req_str.to_string(),
             })
         }
-    }
-
-    /// # Safety
-    /// this api is sound iff when the package is a valid plugin package.
-    #[cfg(windows)]
-    unsafe fn load_plugin_inner(package: &Package) -> Result<Library> {
-        trace!("running on Windows, using release-recheck strategy");
-        use windows::Win32::Storage::FileSystem::{
-            FILE_EXECUTE, FILE_GENERIC_READ, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        };
-
-        let temp_dir = tempfile::tempdir()?;
-        let temp_dll_path = temp_dir.path().join("plugin.dll");
-        // release dll to temporary directory
-        fs::write(&temp_dll_path, package.library.as_slice())?;
-        trace!("release dll to: {:?}", temp_dll_path);
-
-        // lockdown target dll
-        let mut f = fs::File::options()
-            .access_mode((FILE_READ_DATA | FILE_EXECUTE | FILE_GENERIC_READ).0)
-            .share_mode((FILE_SHARE_READ | FILE_SHARE_DELETE).0)
-            .open(&temp_dll_path)?;
-        trace!("re-open dll from: {:?}", temp_dll_path);
-
-        // verify
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf).unwrap();
-        let mut blake = blake::Blake::new(512).unwrap();
-        blake.update(buf.as_slice());
-        let mut digest = [0; 64];
-        blake.finalise(&mut digest);
-        if digest != package.digest() {
-            warn!("plugin dll has been tampered");
-            return Err(Error::Tampered);
-        }
-        trace!("integrity check passed");
-
-        let lib = Library::new(&temp_dll_path).map_err(Error::LibraryLoad)?;
-        trace!("successfully loaded target dll");
-        Ok(lib)
     }
 }
 
@@ -219,6 +188,10 @@ fn test_load() {
     pretty_env_logger::init();
     let mut plugin_mgr = PluginManager::new();
     unsafe {
-        plugin_mgr.load_plugin(r"C:\Users\light_0pv2g\CLionProjects\comet-dynamic-platform\target\debug\spider.cdp").unwrap();
+        plugin_mgr
+            .load_plugin(
+                r"/Users/lightsing/workspace/GitHub/comet-dynamic-platform/target/debug/spider.cdp",
+            )
+            .unwrap();
     }
 }

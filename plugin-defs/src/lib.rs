@@ -2,10 +2,20 @@
 extern crate log;
 
 use ed25519::Signature;
+use rand::distributions::{Alphanumeric, DistString};
+use rand::thread_rng;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
+
+#[cfg(windows)]
+const PLUGIN_EXT: &str = "dll";
+#[cfg(all(unix, not(target_os = "macos")))]
+const PLUGIN_EXT: &str = "so";
+#[cfg(target_os = "macos")]
+const PLUGIN_EXT: &str = "dylib";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -17,6 +27,8 @@ pub enum Error {
     Signature(#[from] ed25519::Error),
     #[error("package digest mismatch")]
     InvalidDigest,
+    #[error("unable to read the package file: {0}")]
+    UnableToReadPackage(std::io::Error),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -106,7 +118,7 @@ impl Package {
     where
         V: ed25519::signature::Verifier<Signature>,
     {
-        let content = fs::read(pathname)?;
+        let content = fs::read(pathname).map_err(Error::UnableToReadPackage)?;
         Self::import(content.as_slice(), verifier)
     }
 
@@ -130,10 +142,25 @@ impl Package {
             Err(Error::InvalidDigest)
         }
     }
+
+    pub fn release_lib_to_temp(&self) -> Result<(TempDir, PathBuf)> {
+        let temp_dir = tempfile::tempdir()?;
+        // generate a random name with extension
+        let temp_dll_name = format!(
+            "{}.{}",
+            Alphanumeric.sample_string(&mut thread_rng(), 32),
+            PLUGIN_EXT
+        );
+        let temp_dll_path = temp_dir.path().join(temp_dll_name);
+        fs::write(&temp_dll_path, self.library.as_slice())?;
+        trace!("release {PLUGIN_EXT} to: {:?}", temp_dll_path);
+        Ok((temp_dir, temp_dll_path))
+    }
 }
 
 mod ser {
     use super::Package;
+    use plugin_commons::consts::*;
     use serde::ser::{Error, SerializeStruct};
     use serde::{Serialize, Serializer};
 
@@ -144,6 +171,8 @@ mod ser {
         {
             let mut ser = serializer.serialize_struct("Package", 1)?;
             let meta_json = serde_json::to_string(&self.metadata).map_err(S::Error::custom)?;
+            ser.serialize_field("bincode_version", BINCODE_VERSION)?;
+            ser.serialize_field("abi_stable_version", ABI_STABLE_VERSION)?;
             ser.serialize_field("metadata", &meta_json)?;
             ser.serialize_field("library", &self.library)?;
             ser.end()
@@ -153,11 +182,14 @@ mod ser {
 
 mod de {
     use super::Package;
+    use plugin_commons::consts::*;
     use serde::de::Error;
     use serde::{Deserialize, Deserializer};
 
     #[derive(Deserialize)]
     struct PackageDe {
+        bincode_version: String,
+        abi_stable_version: String,
         metadata: String,
         library: Vec<u8>,
     }
@@ -168,6 +200,28 @@ mod de {
             D: Deserializer<'de>,
         {
             let de = PackageDe::deserialize(deserializer)?;
+            if de.bincode_version != BINCODE_VERSION {
+                warn!(
+                    "bincode version mismatch: expected {}, got {}",
+                    BINCODE_VERSION, de.bincode_version
+                );
+                #[cfg(feature = "strict")]
+                return Err(Error::custom(format!(
+                    "bincode version mismatch: expected {}, got {}",
+                    BINCODE_VERSION, de.bincode_version
+                )));
+            }
+            if de.abi_stable_version != ABI_STABLE_VERSION {
+                warn!(
+                    "abi stable version mismatch: expected {}, got {}",
+                    ABI_STABLE_VERSION, de.abi_stable_version
+                );
+                #[cfg(feature = "strict")]
+                return Err(Error::custom(format!(
+                    "abi stable version mismatch: expected {}, got {}",
+                    ABI_STABLE_VERSION, de.abi_stable_version
+                )));
+            }
             let metadata = serde_json::from_str(&de.metadata).map_err(D::Error::custom)?;
             Ok(Self {
                 metadata,

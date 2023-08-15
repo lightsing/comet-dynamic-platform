@@ -3,6 +3,7 @@
 members = [
     "modules/spider",
     "plugin-base",
+    "plugin-commons",
     "plugin-defs",
     "plugin-pack",
 ]
