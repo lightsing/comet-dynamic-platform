@@ -211,6 +211,7 @@ mod de {
                     BINCODE_VERSION, de.bincode_version
                 )));
             }
+            trace!("bincode version matched");
             if de.abi_stable_version != ABI_STABLE_VERSION {
                 warn!(
                     "abi stable version mismatch: expected {}, got {}",
@@ -222,6 +223,7 @@ mod de {
                     ABI_STABLE_VERSION, de.abi_stable_version
                 )));
             }
+            trace!("abi stable version matched");
             let metadata = serde_json::from_str(&de.metadata).map_err(D::Error::custom)?;
             Ok(Self {
                 metadata,

@@ -16,7 +16,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_file = std::path::Path::new(&out_dir).join("consts.rs");
     std::fs::write(
-        &out_file,
+        out_file,
         format!(
             r#"pub const BINCODE_VERSION: &str = "{bincode_version}";
 pub const ABI_STABLE_VERSION: &str = "{abi_stable_version}";
